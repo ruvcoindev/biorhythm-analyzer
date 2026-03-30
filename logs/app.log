@@ -1,9 +1,0 @@
-2026-03-28 20:05:44.330 [32m[INFO][0m proc.go:271:runtime.main Starting biorhythm-analyzer
-2026-03-28 20:05:44.330 [36m[DEBUG][0m proc.go:271:runtime.main Debug mode enabled
-2026-03-28 20:05:44.330 [32m[INFO][0m proc.go:271:runtime.main Starting web server on port 8095
-2026-03-28 20:05:44.331 [32m[INFO][0m main.go:92:main.main.func1 Web server starting on port 8095
-2026-03-28 20:05:47.330 [32m[INFO][0m proc.go:271:runtime.main Shutting down...
-2026-03-28 20:05:47.338 [INFO] proc.go:271:runtime.main Starting biorhythm-analyzer
-2026-03-28 20:05:47.339 [INFO] proc.go:271:runtime.main Starting web server on port 8095
-2026-03-28 20:05:47.339 [INFO] main.go:92:main.main.func1 Web server starting on port 8095
-2026-03-28 20:05:55.754 [INFO] proc.go:271:runtime.main Shutting down...
