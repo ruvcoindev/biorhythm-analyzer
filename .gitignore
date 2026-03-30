@@ -18,6 +18,7 @@ vendor/
 dist/
 build/
 bin/
+data/
 
 # IDE
 .idea/
