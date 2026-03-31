@@ -56,7 +56,7 @@ func GetDetailedStatus(r float64) string {
 	if diff < 0.05 {
 		golden = " [✨ ЗОЛОТОЕ СЕЧЕНИЕ]"
 	}
-	
+
 	// ==================== УРОВЕНЬ 7: САМОАКТУАЛИЗАЦИЯ (r > 0.95) ====================
 	if r > 0.98 {
 		return fmt.Sprintf("%5.1f%% | 🔥 СИМБИОЗ (Слияние душ, потеря эго)%s", p, golden)
@@ -67,7 +67,7 @@ func GetDetailedStatus(r float64) string {
 	if r > 0.95 {
 		return fmt.Sprintf("%5.1f%% | 🕊️ САМОАКТУАЛИЗАЦИЯ (Полная реализация потенциала)%s", p, golden)
 	}
-	
+
 	// ==================== УРОВЕНЬ 6: ГАРМОНИЯ (0.80 - 0.95) ====================
 	if r > 0.90 {
 		return fmt.Sprintf("%5.1f%% | 💎 КОСМИЧЕСКАЯ ЛЮБОВЬ (Безусловное принятие)%s", p, golden)
@@ -78,7 +78,7 @@ func GetDetailedStatus(r float64) string {
 	if r > 0.80 {
 		return fmt.Sprintf("%5.1f%% | 💞 ГЛУБОКАЯ ПРИВЯЗАННОСТЬ (Душевное родство)%s", p, golden)
 	}
-	
+
 	// ==================== УРОВЕНЬ 5: ЛЮБОВЬ И ПРИНЯТИЕ (0.60 - 0.80) ====================
 	if r > 0.75 {
 		return fmt.Sprintf("%5.1f%% | 💛 ИСКРЕННЯЯ БЛИЗОСТЬ (Тёплые доверительные)%s", p, golden)
@@ -92,7 +92,7 @@ func GetDetailedStatus(r float64) string {
 	if r > 0.60 {
 		return fmt.Sprintf("%5.1f%% | 🌱 СИМПАТИЯ (Начало близости)%s", p, golden)
 	}
-	
+
 	// ==================== УРОВЕНЬ 4: СТАБИЛЬНОСТЬ (0.30 - 0.60) ====================
 	if r > 0.50 {
 		return fmt.Sprintf("%5.1f%% | 👋 ДОБРОЖЕЛАТЕЛЬНОСТЬ (Открытость к контакту)%s", p, golden)
@@ -106,7 +106,7 @@ func GetDetailedStatus(r float64) string {
 	if r > 0.30 {
 		return fmt.Sprintf("%5.1f%% | 🧘 ЭМОЦИОНАЛЬНЫЙ НОЛЬ (Спокойное равнодушие)%s", p, golden)
 	}
-	
+
 	// ==================== УРОВЕНЬ 3: НЕЙТРАЛЬНОСТЬ (0.00 - 0.30) ====================
 	if r > 0.20 {
 		return fmt.Sprintf("%5.1f%% | 🧊 ЛЁГКАЯ ОТСТРАНЁННОСТЬ (Дипломатичность)%s", p, golden)
@@ -117,7 +117,7 @@ func GetDetailedStatus(r float64) string {
 	if r > 0.00 {
 		return fmt.Sprintf("%5.1f%% | ❓ НЕОПРЕДЕЛЁННОСТЬ (Формирование отношения)%s", p, golden)
 	}
-	
+
 	// ==================== УРОВЕНЬ 2: НАПРЯЖЕНИЕ (-0.30 - 0.00) ====================
 	if r > -0.10 {
 		return fmt.Sprintf("%5.1f%% | 😌 ЛЁГКОЕ НАПРЯЖЕНИЕ (Притирка)%s", p, golden)
@@ -128,7 +128,7 @@ func GetDetailedStatus(r float64) string {
 	if r > -0.30 {
 		return fmt.Sprintf("%5.1f%% | 🥀 ОТЧУЖДЕНИЕ (Эмоциональная дистанция)%s", p, golden)
 	}
-	
+
 	// ==================== УРОВЕНЬ 1: КОНФЛИКТ (-0.60 - -0.30) ====================
 	if r > -0.40 {
 		return fmt.Sprintf("%5.1f%% | ⚡ НАПРЯЖЕНИЕ (Постоянные трения)%s", p, golden)
@@ -139,7 +139,7 @@ func GetDetailedStatus(r float64) string {
 	if r > -0.60 {
 		return fmt.Sprintf("%5.1f%% | 💔 РАЗРЫВ (Потеря эмоциональной связи)%s", p, golden)
 	}
-	
+
 	// ==================== УРОВЕНЬ 0: АНТАГОНИЗМ (r < -0.60) ====================
 	if r > -0.70 {
 		return fmt.Sprintf("%5.1f%% | 🗡️ ВРАЖДЕБНОСТЬ (Системный конфликт)%s", p, golden)
@@ -535,7 +535,7 @@ func CorrelationStability(p1, p2 models.Person, startDate time.Time, days int) (
 		sum += r
 	}
 	mean = sum / float64(days)
-	
+
 	// Медиана
 	sorted := make([]float64, days)
 	copy(sorted, values)
@@ -545,7 +545,7 @@ func CorrelationStability(p1, p2 models.Person, startDate time.Time, days int) (
 	} else {
 		median = sorted[days/2]
 	}
-	
+
 	// Дисперсия
 	sumSq := 0.0
 	for _, v := range values {
@@ -553,7 +553,7 @@ func CorrelationStability(p1, p2 models.Person, startDate time.Time, days int) (
 		sumSq += diff * diff
 	}
 	variance = sumSq / float64(days)
-	
+
 	return mean, median, variance
 }
 
@@ -590,7 +590,7 @@ func ForecastCorrelation(p1, p2 models.Person, startDate time.Time, days int) []
 		r := CalculateCorrelation(p1, p2, date)
 		harmony := CalculateHarmony(r)
 		sphereScores := calculateSphereScores(r)
-		
+
 		result[i] = ForecastPoint{
 			Date:         date,
 			R:            r,
@@ -607,7 +607,7 @@ func calculateSphereScores(r float64) SphereScores {
 	scores := make(SphereScores)
 	absR := math.Abs(r)
 	baseScore := (r + 1) / 2 * 100
-	
+
 	for _, sphere := range SpheresOfLife {
 		var score float64
 		switch sphere {
@@ -651,20 +651,20 @@ func FindBestDaysForSphere(p1, p2 models.Person, startDate time.Time, days int, 
 	R     float64
 } {
 	forecast := ForecastCorrelation(p1, p2, startDate, days)
-	
+
 	type DayScore struct {
 		Date  time.Time
 		Score float64
 		R     float64
 	}
-	
+
 	scores := make([]DayScore, 0)
 	for _, f := range forecast {
 		if score, ok := f.SphereScores[sphere]; ok {
 			scores = append(scores, DayScore{f.Date, score, f.R})
 		}
 	}
-	
+
 	// Сортируем по убыванию оценки
 	for i := 0; i < len(scores)-1; i++ {
 		for j := i + 1; j < len(scores); j++ {
@@ -673,7 +673,7 @@ func FindBestDaysForSphere(p1, p2 models.Person, startDate time.Time, days int, 
 			}
 		}
 	}
-	
+
 	// Возвращаем топ-5
 	result := make([]struct {
 		Date  time.Time
@@ -693,11 +693,11 @@ func GetBiorhythm(birthDate time.Time, now time.Time, period float64) float64 {
 	// Защита от паники
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("PANIC in GetBiorhythm: birth=%s, now=%s, period=%f, error=%v\n", 
+			fmt.Printf("PANIC in GetBiorhythm: birth=%s, now=%s, period=%f, error=%v\n",
 				birthDate.Format("2006-01-02"), now.Format("2006-01-02"), period, r)
 		}
 	}()
-	
+
 	days := now.Sub(birthDate).Hours() / 24
 	// Защита от слишком больших чисел
 	if math.IsNaN(days) || math.IsInf(days, 0) {

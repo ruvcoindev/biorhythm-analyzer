@@ -52,24 +52,24 @@ func PrintCorrelationMatrix(people []models.Person, now time.Time) {
 func PrintBiorhythmStatusWithExplanation(person models.Person, now time.Time) {
 	fmt.Printf("\n👤 %s:\n", person.Name)
 	fmt.Println(strings.Repeat("─", 60))
-	
+
 	for _, br := range models.Biorhythms {
 		val := metrics.GetBiorhythm(person.BirthDate, now, br.Period)
 		icon := getBiorhythmIconDetailed(val)
 		status := getBiorhythmStatusText(val)
 		bar := getBarVisual(val, 25)
-		
+
 		fmt.Printf("   %s %-14s: %6.3f %s\n", icon, br.Name, val, bar)
 		fmt.Printf("      └─ %s\n", status)
 	}
-	
+
 	// Общая оценка
 	avg := 0.0
 	for _, br := range models.Biorhythms {
 		avg += metrics.GetBiorhythm(person.BirthDate, now, br.Period)
 	}
 	avg /= float64(len(models.Biorhythms))
-	
+
 	fmt.Printf("\n   📊 ОБЩАЯ ОЦЕНКА: ")
 	if avg > 0.3 {
 		fmt.Printf("ПОДЪЕМ — благоприятный период для активности\n")

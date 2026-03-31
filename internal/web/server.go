@@ -32,8 +32,8 @@ func (s *Server) Start() error {
 	http.HandleFunc("/biorhythms", s.logMiddleware(s.biorhythmsPageHandler))
 	http.HandleFunc("/timeline", s.logMiddleware(s.timelinePageHandler))
 	http.HandleFunc("/forecast", s.logMiddleware(s.forecastPageHandler))
+	http.HandleFunc("/zones", s.logMiddleware(s.zonesPageHandler))
 	http.HandleFunc("/help", s.logMiddleware(s.helpPageHandler))
-	http.HandleFunc("/zones", s.zonesPageHandler)
 	http.HandleFunc("/api/pairs", s.logMiddleware(s.pairsHandler))
 	http.HandleFunc("/api/matrix", s.logMiddleware(s.matrixHandler))
 	http.HandleFunc("/api/biorhythms", s.logMiddleware(s.biorhythmsAllHandler))
@@ -44,18 +44,19 @@ func (s *Server) Start() error {
 	fmt.Printf("\n🌐 Веб-интерфейс: http://localhost:%s\n", s.port)
 	fmt.Printf("📅 Текущее время сервера: %s\n", time.Now().Format("02.01.2006 15:04:05"))
 	fmt.Println("\n📊 Доступные страницы:")
-	fmt.Printf("   - http://localhost:%s/          - Главная (анализ пар)\n", s.port)
-	fmt.Printf("   - http://localhost:%s/matrix    - Матрица корреляций\n", s.port)
-	fmt.Printf("   - http://localhost:%s/biorhythms - Биоритмы всех субъектов\n", s.port)
-	fmt.Printf("   - http://localhost:%s/timeline  - Динамика корреляций (90 дней)\n", s.port)
-	fmt.Printf("   - http://localhost:%s/forecast  - Прогноз по сферам жизни\n", s.port)
+	fmt.Printf("   - http://localhost:%s/          - Главная\n", s.port)
+	fmt.Printf("   - http://localhost:%s/matrix    - Матрица\n", s.port)
+	fmt.Printf("   - http://localhost:%s/biorhythms - Биоритмы\n", s.port)
+	fmt.Printf("   - http://localhost:%s/timeline  - Динамика\n", s.port)
+	fmt.Printf("   - http://localhost:%s/forecast  - Прогноз\n", s.port)
+	fmt.Printf("   - http://localhost:%s/zones     - 31 зона\n", s.port)
 	fmt.Printf("   - http://localhost:%s/help      - Справка\n", s.port)
 	fmt.Println("\n📡 API эндпоинты:")
-	fmt.Printf("   - /api/pairs      - анализ пар\n")
-	fmt.Printf("   - /api/matrix     - матрица корреляций\n")
-	fmt.Printf("   - /api/biorhythms - биоритмы всех\n")
-	fmt.Printf("   - /api/timeline?a=Имя&b=Имя - динамика пары\n")
-	fmt.Printf("   - /api/forecast?a=Имя&b=Имя - прогноз пары\n")
+	fmt.Printf("   - /api/pairs\n")
+	fmt.Printf("   - /api/matrix\n")
+	fmt.Printf("   - /api/biorhythms\n")
+	fmt.Printf("   - /api/timeline\n")
+	fmt.Printf("   - /api/forecast\n")
 	fmt.Println("\n[!] Ctrl+C для остановки")
 
 	return http.ListenAndServe(":"+s.port, nil)
@@ -64,13 +65,10 @@ func (s *Server) Start() error {
 func (s *Server) logMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		s.log.Debug("Incoming: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-
+		s.log.Debug("Incoming: %s %s", r.Method, r.URL.Path)
 		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 		next(lrw, r)
-
-		duration := time.Since(start)
-		s.log.Info("Completed: %s %s -> %d (%v)", r.Method, r.URL.Path, lrw.statusCode, duration)
+		s.log.Info("Completed: %s %s -> %d (%v)", r.Method, r.URL.Path, lrw.statusCode, time.Since(start))
 	}
 }
 
@@ -84,6 +82,8 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
+// ==================== API HANDLERS ====================
+
 func (s *Server) pairsHandler(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	people, err := storage.LoadPeople()
@@ -92,21 +92,6 @@ func (s *Server) pairsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	response := map[string]interface{}{
-		"people_count": len(people),
-		"pairs_count":  0,
-		"pairs":        []interface{}{},
-	}
-
-	if len(people) == 0 {
-		s.log.Warn("No people data available")
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	s.log.Debug("Processing %d people", len(people))
 
 	type PairResponse struct {
 		PersonA string  `json:"person_a"`
@@ -119,13 +104,7 @@ func (s *Server) pairsHandler(w http.ResponseWriter, r *http.Request) {
 
 	pairs := []PairResponse{}
 	for i := 0; i < len(people); i++ {
-		if s.log != nil { s.log.Debug("Processing row %d for %s", i, people[i].Name) }
 		for j := i + 1; j < len(people); j++ {
-			if s.log != nil { s.log.Debug("  Computing correlation %s vs %s", people[i].Name, people[j].Name) }
-			if people[i].Name == "" || people[j].Name == "" {
-				if s.log != nil { s.log.Error("Empty name in matrix at i=%d, j=%d", i, j) }
-				continue
-			}
 			r := metrics.CalculateCorrelation(people[i], people[j], now)
 			pairs = append(pairs, PairResponse{
 				PersonA: people[i].Name,
@@ -142,15 +121,54 @@ func (s *Server) pairsHandler(w http.ResponseWriter, r *http.Request) {
 		return math.Abs(pairs[i].R) > math.Abs(pairs[j].R)
 	})
 
-	response["pairs_count"] = len(pairs)
-	response["pairs"] = pairs
-
-	s.log.Debug("Generated %d pairs", len(pairs))
-
+	response := map[string]interface{}{
+		"people_count": len(people),
+		"pairs_count":  len(pairs),
+		"pairs":        pairs,
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
+func (s *Server) matrixHandler(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	people, err := storage.LoadPeople()
+	if err != nil {
+		s.log.Error("Failed to load people: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if len(people) == 0 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"names":  []string{},
+			"matrix": [][]float64{},
+		})
+		return
+	}
+
+	names := make([]string, len(people))
+	for i, p := range people {
+		names[i] = p.Name
+	}
+
+	matrix := make([][]float64, len(people))
+	for i := 0; i < len(people); i++ {
+		matrix[i] = make([]float64, len(people))
+		matrix[i][i] = 1.0
+		for j := i + 1; j < len(people); j++ {
+			r := metrics.CalculateCorrelation(people[i], people[j], now)
+			matrix[i][j] = r
+			matrix[j][i] = r
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"names":  names,
+		"matrix": matrix,
+	})
+}
 
 func (s *Server) biorhythmsAllHandler(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
@@ -161,21 +179,12 @@ func (s *Server) biorhythmsAllHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(people) == 0 {
-		s.log.Warn("No people data available for biorhythms")
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]interface{}{})
-		return
-	}
-
-	s.log.Debug("Calculating biorhythms for %d people", len(people))
-
 	type BiorhythmData struct {
 		Name   string             `json:"name"`
 		Values map[string]float64 `json:"values"`
 	}
 
-	result := make([]BiorhythmData, 0)
+	result := []BiorhythmData{}
 	for _, p := range people {
 		values := make(map[string]float64)
 		for _, br := range models.Biorhythms {
@@ -197,47 +206,27 @@ func (s *Server) timelineDataHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(people) == 0 {
-		s.log.Warn("No people data available for timeline")
-		http.Error(w, "Нет данных о субъектах", http.StatusBadRequest)
-		return
-	}
-
 	personA := r.URL.Query().Get("a")
 	personB := r.URL.Query().Get("b")
 
-	if personA == "" || personB == "" {
-		s.log.Warn("Missing person names: a=%s, b=%s", personA, personB)
-		http.Error(w, "Не указаны имена субъектов", http.StatusBadRequest)
-		return
-	}
-
-	s.log.Debug("Timeline request for %s - %s", personA, personB)
-
 	var p1, p2 models.Person
-	foundA, foundB := false, false
 	for _, p := range people {
 		if p.Name == personA {
 			p1 = p
-			foundA = true
 		}
 		if p.Name == personB {
 			p2 = p
-			foundB = true
 		}
 	}
 
-	if !foundA || !foundB {
-		s.log.Warn("Person not found: a=%s (found=%v), b=%s (found=%v)", personA, foundA, personB, foundB)
-		http.Error(w, "Один или оба субъекта не найдены", http.StatusBadRequest)
+	if p1.Name == "" || p2.Name == "" {
+		http.Error(w, "Люди не найдены", http.StatusBadRequest)
 		return
 	}
 
 	days := 90
 	startDate := now.AddDate(0, 0, -days)
 	timeline := metrics.CorrelationTimeline(p1, p2, startDate, days)
-
-	s.log.Debug("Generated timeline with %d points", len(timeline))
 
 	type TimelinePoint struct {
 		Date    string  `json:"date"`
@@ -290,16 +279,10 @@ func (s *Server) forecastDataHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(people) == 0 {
-		s.log.Warn("No people data available for forecast")
-		http.Error(w, "Нет данных о субъектах", http.StatusBadRequest)
-		return
-	}
-
 	personA := r.URL.Query().Get("a")
 	personB := r.URL.Query().Get("b")
 	daysStr := r.URL.Query().Get("days")
-	var days int
+	days := 30
 	if daysStr != "" {
 		fmt.Sscanf(daysStr, "%d", &days)
 	}
@@ -307,44 +290,30 @@ func (s *Server) forecastDataHandler(w http.ResponseWriter, r *http.Request) {
 		days = 30
 	}
 
-	if personA == "" || personB == "" {
-		s.log.Warn("Missing person names: a=%s, b=%s", personA, personB)
-		http.Error(w, "Не указаны имена субъектов", http.StatusBadRequest)
-		return
-	}
-
-	s.log.Debug("Forecast request for %s - %s, days=%d", personA, personB, days)
-
 	var p1, p2 models.Person
-	foundA, foundB := false, false
 	for _, p := range people {
 		if p.Name == personA {
 			p1 = p
-			foundA = true
 		}
 		if p.Name == personB {
 			p2 = p
-			foundB = true
 		}
 	}
 
-	if !foundA || !foundB {
-		s.log.Warn("Person not found: a=%s (found=%v), b=%s (found=%v)", personA, foundA, personB, foundB)
-		http.Error(w, "Один или оба субъекта не найдены", http.StatusBadRequest)
+	if p1.Name == "" || p2.Name == "" {
+		http.Error(w, "Люди не найдены", http.StatusBadRequest)
 		return
 	}
 
 	startDate := now.AddDate(0, 0, 1)
 	forecast := metrics.ForecastCorrelation(p1, p2, startDate, days)
 
-	s.log.Debug("Generated forecast with %d points", len(forecast))
-
 	type ForecastPoint struct {
-		Date         string                       `json:"date"`
-		R            float64                      `json:"r"`
-		Harmony      float64                      `json:"harmony"`
-		Status       string                       `json:"status"`
-		SphereScores map[string]float64           `json:"sphere_scores"`
+		Date         string             `json:"date"`
+		R            float64            `json:"r"`
+		Harmony      float64            `json:"harmony"`
+		Status       string             `json:"status"`
+		SphereScores map[string]float64 `json:"sphere_scores"`
 	}
 
 	result := make([]ForecastPoint, len(forecast))
@@ -358,299 +327,114 @@ func (s *Server) forecastDataHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	spheres := []string{"💖 Любовь и отношения", "💼 Карьера и бизнес", "👥 Дружба и социализация", "🎨 Творчество", "💪 Здоровье и энергия", "📚 Обучение и развитие", "💰 Финансы"}
-	bestDays := make(map[string][]map[string]interface{})
-
-	for _, sphere := range spheres {
-		best := metrics.FindBestDaysForSphere(p1, p2, startDate, days, sphere)
-		daysList := make([]map[string]interface{}, 0)
-		for _, d := range best {
-			daysList = append(daysList, map[string]interface{}{
-				"date":  d.Date.Format("02.01.2006"),
-				"score": d.Score,
-				"r":     d.R,
-			})
-		}
-		bestDays[sphere] = daysList
-	}
-
 	response := map[string]interface{}{
-		"person_a":  p1.Name,
-		"person_b":  p2.Name,
-		"forecast":  result,
-		"best_days": bestDays,
+		"person_a": p1.Name,
+		"person_b": p2.Name,
+		"forecast": result,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
+// ==================== PAGE HANDLERS ====================
+
 func (s *Server) indexHandler(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
-
 	html := `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Главная | Психометрический анализатор</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-        }
-        .navbar {
-            background: rgba(0,0,0,0.3);
-            padding: 15px 30px;
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-        .navbar a {
-            color: white;
-            text-decoration: none;
-            padding: 8px 16px;
-            border-radius: 8px;
-            transition: background 0.3s;
-        }
-        .navbar a:hover, .navbar a.active {
-            background: rgba(255,255,255,0.2);
-        }
-        .datetime {
-            background: rgba(0,0,0,0.2);
-            color: white;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-family: monospace;
-            margin-left: auto;
-        }
-        .container {
-            max-width: 1400px;
-            margin: 20px auto;
-            background: white;
-            border-radius: 20px;
-            overflow: hidden;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-        }
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-        .header h1 { font-size: 2em; margin-bottom: 10px; }
-        .header .datetime-badge {
-            background: rgba(255,255,255,0.2);
-            display: inline-block;
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-size: 0.9em;
-            margin-top: 10px;
-        }
-        .content { padding: 30px; }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .stat-card {
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            padding: 20px;
-            border-radius: 15px;
-            text-align: center;
-        }
-        .stat-card h3 { color: #667eea; margin-bottom: 10px; }
-        .stat-card .value { font-size: 2em; font-weight: bold; color: #764ba2; }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border: 1px solid #ddd;
-        }
-        th {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        tr:hover { background-color: #f5f5f5; }
-        .positive { color: #4ECDC4; font-weight: bold; }
-        .negative { color: #FF6B6B; font-weight: bold; }
-        .harmony-high { color: #4ECDC4; }
-        .harmony-mid { color: #FFEAA7; }
-        .harmony-low { color: #FF6B6B; }
-        .loading { text-align: center; padding: 40px; color: #666; }
-        .error-message {
-            background: #ffe0e0;
-            border-left: 4px solid #c00;
-            padding: 20px;
-            border-radius: 10px;
-            color: #c00;
-            text-align: center;
-            margin: 20px 0;
-        }
-        .footer {
-            background: #333;
-            color: white;
-            text-align: center;
-            padding: 20px;
-            font-size: 0.9em;
-        }
-        button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            margin: 10px;
-        }
-        button:hover { transform: translateY(-2px); }
-    </style>
-</head>
-<body>
-    <div class="navbar">
-        <a href="/" class="active">🏠 Главная</a>
-        <a href="/matrix">📊 Матрица</a>
-        <a href="/biorhythms">📈 Биоритмы</a>
-        <a href="/timeline">📉 Динамика</a>
-        <a href="/forecast">🔮 Прогноз</a>
+<html><head><meta charset="UTF-8"><title>Психометрический анализатор</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh}
+.navbar{background:rgba(0,0,0,0.3);padding:15px 30px;display:flex;gap:20px;flex-wrap:wrap;align-items:center}
+.navbar a{color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px}
+.navbar a:hover,.navbar a.active{background:rgba(255,255,255,0.2)}
+.datetime{background:rgba(0,0,0,0.2);color:#fff;padding:8px 16px;border-radius:8px;margin-left:auto}
+.container{max-width:1400px;margin:20px auto;background:#fff;border-radius:20px;overflow:hidden}
+.header{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:30px;text-align:center}
+.content{padding:30px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;margin-bottom:30px}
+.stat-card{background:linear-gradient(135deg,#f5f7fa,#c3cfe2);padding:20px;border-radius:15px;text-align:center}
+.stat-card h3{color:#667eea}
+.stat-card .value{font-size:2em;font-weight:bold;color:#764ba2}
+table{width:100%;border-collapse:collapse;margin-top:20px}
+th,td{padding:12px;text-align:left;border:1px solid #ddd}
+th{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff}
+tr:hover{background:#f5f5f5}
+.positive{color:#4ECDC4;font-weight:bold}
+.negative{color:#FF6B6B;font-weight:bold}
+.harmony-high{color:#4ECDC4}
+.harmony-mid{color:#FFEAA7}
+.harmony-low{color:#FF6B6B}
+.loading{text-align:center;padding:40px}
+.footer{background:#333;color:#fff;text-align:center;padding:20px}
+button{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;margin:10px}
+</style></head><body>
+<div class="navbar">
+<a href="/" class="active">🏠 Главная</a>
+<a href="/matrix">📊 Матрица</a>
+<a href="/biorhythms">📈 Биоритмы</a>
+<a href="/timeline">📉 Динамика</a>
+<a href="/forecast">🔮 Прогноз</a>
 <a href="/zones">📖 31 зона</a>
-        <a href="/help">❓ Справка</a>
-        <div class="datetime">📅 ` + now.Format("02.01.2006 15:04:05") + `</div>
-    </div>
-    <div class="container">
-        <div class="header">
-            <h1>🧠 Психометрический анализатор</h1>
-            <p>Анализ биоритмов и корреляций | 31 зона | Гармоничность | Прогнозы</p>
-            <div class="datetime-badge">📅 Расчёт на: ` + now.Format("02.01.2006 15:04:05") + `</div>
-        </div>
-        <div class="content">
-            <div class="stats" id="stats">
-                <div class="stat-card"><h3>👥 Субъектов</h3><div class="value" id="peopleCount">-</div></div>
-                <div class="stat-card"><h3>🔄 Пар</h3><div class="value" id="pairsCount">-</div></div>
-                <div class="stat-card"><h3>🎯 Эталон Φ</h3><div class="value">0.618</div></div>
-                <div class="stat-card"><h3>📊 Зон анализа</h3><div class="value">31</div></div>
-            </div>
-            
-            <h2>📊 Анализ пар (31 зона психологической классификации)</h2>
-            <div id="pairsTable"><div class="loading">Загрузка данных...</div></div>
-            
-            <div style="text-align: center; margin-top: 30px;">
-                <button onclick="location.reload()">🔄 Обновить</button>
-            </div>
-        </div>
-        <div class="footer">
-            <p>🎵 Гармоничность (0-10) — близость к золотому сечению Φ = 0.618 | 7 уровней сознания, 31 зона</p>
-            <p>📅 Дата расчёта: ` + now.Format("02.01.2006 15:04:05") + `</p>
-        </div>
-    </div>
-    
-    <script>
-        function getStatusEmoji(status) {
-            if (status.includes('СИМБИОЗ')) return '🔥';
-            if (status.includes('ТРАНСЦЕНДЕНТНОСТЬ')) return '💫';
-            if (status.includes('САМОАКТУАЛИЗАЦИЯ')) return '🕊️';
-            if (status.includes('КОСМИЧЕСКАЯ ЛЮБОВЬ')) return '💎';
-            if (status.includes('БОЖЕСТВЕННАЯ ГАРМОНИЯ')) return '💖';
-            if (status.includes('ГЛУБОКАЯ ПРИВЯЗАННОСТЬ')) return '💞';
-            if (status.includes('ИСКРЕННЯЯ БЛИЗОСТЬ')) return '💛';
-            if (status.includes('ДРУЖЕСКАЯ СИМПАТИЯ')) return '🌸';
-            if (status.includes('ВЗАИМОПОНИМАНИЕ')) return '🤝';
-            if (status.includes('СИМПАТИЯ') && !status.includes('ДРУЖЕСКАЯ')) return '🌱';
-            if (status.includes('ДОБРОЖЕЛАТЕЛЬНОСТЬ')) return '👋';
-            if (status.includes('НЕЙТРАЛЬНО-ПОЗИТИВНОЕ')) return '😐';
-            if (status.includes('ЛЁГКАЯ СИМПАТИЯ')) return '📍';
-            if (status.includes('ЭМОЦИОНАЛЬНЫЙ НОЛЬ')) return '🧘';
-            if (status.includes('ЛЁГКАЯ ОТСТРАНЁННОСТЬ')) return '🧊';
-            if (status.includes('НАБЛЮДАТЕЛЬ')) return '🤨';
-            if (status.includes('НЕОПРЕДЕЛЁННОСТЬ')) return '❓';
-            if (status.includes('ЛЁГКОЕ НАПРЯЖЕНИЕ')) return '😌';
-            if (status.includes('РАЗДРАЖЕНИЕ')) return '😤';
-            if (status.includes('ОТЧУЖДЕНИЕ')) return '🥀';
-            if (status.includes('НАПРЯЖЕНИЕ') && !status.includes('ЛЁГКОЕ')) return '⚡';
-            if (status.includes('КОНФРОНТАЦИЯ')) return '🔥';
-            if (status.includes('РАЗРЫВ')) return '💔';
-            if (status.includes('ВРАЖДЕБНОСТЬ')) return '🗡️';
-            if (status.includes('АНТАГОНИЗМ')) return '💀';
-            if (status.includes('ПСИХОЛОГИЧЕСКОЕ ОТТОРЖЕНИЕ')) return '🌑';
-            if (status.includes('ЭКЗИСТЕНЦИАЛЬНАЯ НЕСОВМЕСТИМОСТЬ')) return '🕳️';
-            if (status.includes('ТОТАЛЬНЫЙ РАЗРЫВ')) return '🌌';
-            return '📊';
-        }
-        
-        async function loadData() {
-            try {
-                const response = await fetch('/api/pairs');
-                if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
-                }
-                const data = await response.json();
-                
-                document.getElementById('peopleCount').innerText = data.people_count || 0;
-                document.getElementById('pairsCount').innerText = data.pairs_count || 0;
-                
-                if (!data.pairs || data.pairs.length === 0) {
-                    document.getElementById('pairsTable').innerHTML = 
-                        '<div class="error-message">⚠️ Нет данных для отображения. Добавьте субъектов в систему.</div>';
-                    return;
-                }
-                
-                let html = '<table border="1" style="border-collapse: collapse; width: 100%;"><thead>起源' +
-                    '<th>#</th><th>Субъект А</th><th>Субъект Б</th><th>r (Пирсон)</th><th>Гармоничность</th><th>Близость к Φ</th><th>Статус (31 зона)</th>' +
-                    '</thead><tbody>';
-                
-                let num = 1;
-                for (const p of data.pairs) {
-                    const rClass = p.r >= 0 ? 'positive' : 'negative';
-                    let harmonyClass = 'harmony-mid';
-                    if (p.harmony >= 7) harmonyClass = 'harmony-high';
-                    if (p.harmony <= 3) harmonyClass = 'harmony-low';
-                    
-                    html += '<tr>' +
-                        '<td>' + num++ + '</td>' +
-                        '<td>' + escapeHtml(p.person_a) + '</td>' +
-                        '<td>' + escapeHtml(p.person_b) + '</td>' +
-                        '<td class="' + rClass + '">' + p.r.toFixed(4) + '</td>' +
-                        '<td class="' + harmonyClass + '">' + p.harmony.toFixed(2) + '</td>' +
-                        '<td>' + p.phi_diff.toFixed(4) + '</td>' +
-                        '<td>' + getStatusEmoji(p.status) + ' ' + escapeHtml(p.status) + '</td>' +
-                        '</tr>';
-                }
-                html += '</tbody></table>';
-                document.getElementById('pairsTable').innerHTML = html;
-            } catch (error) {
-                console.error('Load error:', error);
-                document.getElementById('pairsTable').innerHTML = 
-                    '<div class="error-message">❌ Ошибка загрузки данных: ' + error.message + '</div>';
-            }
-        }
-        
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-        
-        loadData();
-    </script>
-</body>
-</html>`
+<a href="/help">❓ Справка</a>
+<div class="datetime">📅 ` + now.Format("02.01.2006 15:04:05") + `</div>
+</div>
+<div class="container">
+<div class="header"><h1>🧠 Психометрический анализатор</h1><p>31 зона | Гармоничность | Прогнозы</p></div>
+<div class="content">
+<div class="stats"><div class="stat-card"><h3>👥 Субъектов</h3><div class="value" id="peopleCount">-</div></div>
+<div class="stat-card"><h3>🔄 Пар</h3><div class="value" id="pairsCount">-</div></div>
+<div class="stat-card"><h3>🎯 Эталон Φ</h3><div class="value">0.618</div></div>
+<div class="stat-card"><h3>📊 Зон анализа</h3><div class="value">31</div></div></div>
+<h2>📊 Анализ пар</h2>
+<div id="pairsTable"><div class="loading">Загрузка...</div></div>
+<div style="text-align:center"><button onclick="location.reload()">🔄 Обновить</button></div>
+</div>
+<div class="footer"><p>Гармоничность (0-10) — близость к Φ = 0.618 | 31 зона</p></div>
+</div>
+<script>
+function getEmoji(s){
+if(s.includes('СИМБИОЗ'))return '🔥';if(s.includes('ТРАНСЦЕНДЕНТНОСТЬ'))return '💫';
+if(s.includes('САМОАКТУАЛИЗАЦИЯ'))return '🕊️';if(s.includes('КОСМИЧЕСКАЯ ЛЮБОВЬ'))return '💎';
+if(s.includes('БОЖЕСТВЕННАЯ ГАРМОНИЯ'))return '💖';if(s.includes('ГЛУБОКАЯ ПРИВЯЗАННОСТЬ'))return '💞';
+if(s.includes('ИСКРЕННЯЯ БЛИЗОСТЬ'))return '💛';if(s.includes('ДРУЖЕСКАЯ СИМПАТИЯ'))return '🌸';
+if(s.includes('ВЗАИМОПОНИМАНИЕ'))return '🤝';if(s.includes('СИМПАТИЯ'))return '🌱';
+if(s.includes('ДОБРОЖЕЛАТЕЛЬНОСТЬ'))return '👋';if(s.includes('НЕЙТРАЛЬНО-ПОЗИТИВНОЕ'))return '😐';
+if(s.includes('ЛЁГКАЯ СИМПАТИЯ'))return '📍';if(s.includes('ЭМОЦИОНАЛЬНЫЙ НОЛЬ'))return '🧘';
+if(s.includes('ЛЁГКАЯ ОТСТРАНЁННОСТЬ'))return '🧊';if(s.includes('НАБЛЮДАТЕЛЬ'))return '🤨';
+if(s.includes('НЕОПРЕДЕЛЁННОСТЬ'))return '❓';if(s.includes('ЛЁГКОЕ НАПРЯЖЕНИЕ'))return '😌';
+if(s.includes('РАЗДРАЖЕНИЕ'))return '😤';if(s.includes('ОТЧУЖДЕНИЕ'))return '🥀';
+if(s.includes('КОНФРОНТАЦИЯ'))return '🔥';if(s.includes('РАЗРЫВ'))return '💔';
+if(s.includes('ВРАЖДЕБНОСТЬ'))return '🗡️';if(s.includes('АНТАГОНИЗМ'))return '💀';
+if(s.includes('ПСИХОЛОГИЧЕСКОЕ ОТТОРЖЕНИЕ'))return '🌑';if(s.includes('ЭКЗИСТЕНЦИАЛЬНАЯ НЕСОВМЕСТИМОСТЬ'))return '🕳️';
+return '📊';}
+fetch('/api/pairs').then(r=>r.json()).then(d=>{
+document.getElementById('peopleCount').innerText=d.people_count;
+document.getElementById('pairsCount').innerText=d.pairs_count;
+let h='<table border="1"><thead><tr><th>#</th><th>А</th><th>Б</th><th>r</th><th>Гармония</th><th>|r-Φ|</th><th>Статус</th></tr></thead><tbody>';
+let n=1;
+for(let p of d.pairs){
+let cls=p.r>=0?'positive':'negative';
+let hc='harmony-mid';
+if(p.harmony>=7)hc='harmony-high';
+if(p.harmony<=3)hc='harmony-low';
+h+='<tr><td>'+n+++'</td><td>'+escape(p.person_a)+'</td><td>'+escape(p.person_b)+'</td><td class="'+cls+'">'+p.r.toFixed(4)+'</td><td class="'+hc+'">'+p.harmony.toFixed(2)+'</td><td>'+p.phi_diff.toFixed(4)+'</td><td>'+getEmoji(p.status)+' '+escape(p.status)+'</td></tr>';
+}
+h+='</tbody></table>';
+document.getElementById('pairsTable').innerHTML=h;
+});
+function escape(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
+</script>
+</body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))
 }
 
 func (s *Server) matrixPageHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Матрица корреляций</title>
-<style>
-body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
+<html><head><meta charset="UTF-8"><title>Матрица</title>
+<style>body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
 .navbar{background:rgba(0,0,0,0.3);padding:15px;display:flex;gap:20px;border-radius:15px;margin-bottom:20px}
 .navbar a{color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px}
 .navbar a:hover{background:rgba(255,255,255,0.2)}
@@ -658,279 +442,132 @@ body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);pa
 table{border-collapse:collapse;width:100%}
 th,td{border:1px solid #ddd;padding:8px;text-align:center}
 th{background:#667eea;color:#fff}
-.error-message{background:#ffe0e0;padding:20px;border-radius:10px;color:#c00;text-align:center;margin:20px 0}
-.loading{text-align:center;padding:40px;color:#666}
 </style></head><body>
-<a href="/zones">📖 31 зона</a>
-<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix" class="active">📊 Матрица</a><a href="/biorhythms">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast">🔮 Прогноз</a><a href="/help">❓ Справка</a></div>
-<div class="container"><h1>📊 Матрица корреляций</h1><div id="matrix"><div class="loading">Загрузка...</div></div></div>
-<script>
-fetch('/api/matrix')
-    .then(r => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-    })
-    .then(d => {
-        if(!d.names || d.names.length === 0) {
-            document.getElementById('matrix').innerHTML = 
-                '<div class="error-message">⚠️ Нет данных о субъектах. Добавьте людей в систему.</div>';
-            return;
-        }
-        
-        let h='<table><thead><tr><th>Субъект</th>';
-        for(let n of d.names) h+='<th>'+n+'</th>';
-        h+='</tr></thead><tbody>';
-        
-        for(let i=0;i<d.names.length;i++){
-            h+='<tr><th>'+d.names[i]+'</th>';
-            for(let j=0;j<d.names.length;j++){
-                let v=d.matrix[i][j];
-                let c=v>0.7?'#4ECDC4':v>0.3?'#96CEB4':v>-0.3?'#FFEAA7':v>-0.7?'#FFB6B6':'#FF6B6B';
-                h+='<td style="background:'+c+'">'+v.toFixed(3)+'</td>';
-            }
-            h+='</tr>';
-        }
-        h+='</tbody></table>';
-        document.getElementById('matrix').innerHTML=h;
-    })
-    .catch(err => {
-        console.error('Matrix error:', err);
-        document.getElementById('matrix').innerHTML = 
-            '<div class="error-message">❌ Ошибка загрузки данных: ' + err.message + '</div>';
-    });
-</script></body></html>`))
+<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix" class="active">📊 Матрица</a><a href="/biorhythms">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast">🔮 Прогноз</a><a href="/zones">📖 31 зона</a><a href="/help">❓ Справка</a></div>
+<div class="container"><h1>📊 Матрица корреляций</h1><div id="matrix">Загрузка...</div></div>
+<script>fetch('/api/matrix').then(r=>r.json()).then(d=>{
+let h='<table><thead><tr><th>Субъект</th>';
+for(let n of d.names)h+='<th>'+n+'</th>';
+h+='</tr></thead><tbody>';
+for(let i=0;i<d.names.length;i++){
+h+='<tr><th>'+d.names[i]+'</th>';
+for(let j=0;j<d.names.length;j++){
+let v=d.matrix[i][j];
+let c=v>0.7?'#4ECDC4':v>0.3?'#96CEB4':v>-0.3?'#FFEAA7':v>-0.7?'#FFB6B6':'#FF6B6B';
+h+='<td style="background:'+c+'">'+v.toFixed(3)+'</td>';
+}
+h+='</tr>';
+}
+h+='</tbody></table>';
+document.getElementById('matrix').innerHTML=h;
+});</script></body></html>`))
 }
 
 func (s *Server) biorhythmsPageHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Биоритмы</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
+<style>body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
 .navbar{background:rgba(0,0,0,0.3);padding:15px;display:flex;gap:20px;border-radius:15px;margin-bottom:20px}
 .navbar a{color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px}
 .navbar a:hover{background:rgba(255,255,255,0.2)}
 .container{max-width:1200px;margin:0 auto;background:#fff;border-radius:20px;padding:20px}
 .biorhythm-card{background:#f9f9f9;border-radius:15px;padding:20px;margin-bottom:20px}
-.biorhythm-card h2{color:#667eea;margin-bottom:15px;border-bottom:2px solid #667eea;padding-bottom:10px}
-.bar-container{display:flex;align-items:center;gap:15px;margin:12px 0;flex-wrap:wrap}
-.bar-label{width:140px;font-weight:bold;font-size:14px}
-.bar-value{width:70px;font-family:monospace;font-weight:bold;text-align:right}
-.bar-wrapper{flex:1;min-width:200px}
-.bar{height:32px;background:#e0e0e0;border-radius:16px;overflow:hidden}
-.bar-fill{height:100%;transition:width 0.3s ease;display:flex;align-items:center;justify-content:flex-end;padding-right:10px;color:#fff;font-size:12px;font-weight:bold}
+.bar{height:30px;background:#e0e0e0;border-radius:15px;overflow:hidden}
+.bar-fill{height:100%}
 .positive-bar{background:linear-gradient(90deg,#4ECDC4,#2ecc71)}
 .negative-bar{background:linear-gradient(90deg,#e74c3c,#FF6B6B)}
-.percentage{width:50px;font-size:12px;color:#666}
-.error-message{background:#ffe0e0;padding:20px;border-radius:10px;color:#c00;text-align:center;margin:20px 0}
-.loading{text-align:center;padding:40px;color:#666}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(500px,1fr));gap:20px}
-@media (max-width: 768px){.grid{grid-template-columns:1fr}}
+.biorhythm-item{display:flex;align-items:center;margin:10px 0;gap:15px;flex-wrap:wrap}
+.biorhythm-name{width:120px;font-weight:bold}
+.biorhythm-value{width:80px}
+.bar-container{flex:1;min-width:200px}
 </style></head><body>
-<a href="/zones">📖 31 зона</a>
-<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix">📊 Матрица</a><a href="/biorhythms" class="active">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast">🔮 Прогноз</a><a href="/help">❓ Справка</a></div>
-<div class="container"><h1>📈 Биоритмы</h1><div id="biorhythms"><div class="loading">Загрузка...</div></div></div>
+<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix">📊 Матрица</a><a href="/biorhythms" class="active">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast">🔮 Прогноз</a><a href="/zones">📖 31 зона</a><a href="/help">❓ Справка</a></div>
+<div class="container"><h1>📈 Биоритмы</h1><div id="biorhythms">Загрузка...</div></div>
 <script>
-fetch('/api/biorhythms')
-    .then(r => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-    })
-    .then(d => {
-        if(!d || d.length === 0) {
-            document.getElementById('biorhythms').innerHTML = 
-                '<div class="error-message">⚠️ Нет данных о субъектах. Добавьте людей в систему.</div>';
-            return;
-        }
-        
-        let h='<div class="grid">';
-        for(let p of d){
-            h+='<div class="biorhythm-card"><h2>👤 '+escape(p.name)+'</h2>';
-            let items = Object.entries(p.values);
-            for(let [name,val] of items){
-                let pc=((val+1)/2*100).toFixed(0);
-                let bc=val>=0?'positive-bar':'negative-bar';
-                let bw=Math.abs(val)*100;
-                let sign = val>=0 ? '+' : '';
-                h+='<div class="bar-container">';
-                h+='<div class="bar-label">'+name+'</div>';
-                h+='<div class="bar-value">'+sign+val.toFixed(3)+'</div>';
-                h+='<div class="bar-wrapper"><div class="bar"><div class="bar-fill '+bc+'" style="width:'+bw+'%">'+pc+'%</div></div></div>';
-                h+='</div>';
-            }
-            h+='</div>';
-        }
-        h+='</div>';
-        document.getElementById('biorhythms').innerHTML=h;
-    })
-    .catch(err => {
-        console.error('Biorhythms error:', err);
-        document.getElementById('biorhythms').innerHTML = 
-            '<div class="error-message">❌ Ошибка загрузки данных: ' + err.message + '</div>';
-    });
+fetch('/api/biorhythms').then(r=>r.json()).then(d=>{
+let h='';
+for(let p of d){
+h+='<div class="biorhythm-card"><h2>👤 '+escape(p.name)+'</h2>';
+for(let [name,val] of Object.entries(p.values)){
+let pc=((val+1)/2*100).toFixed(0);
+let bc=val>=0?'positive-bar':'negative-bar';
+let bw=Math.abs(val)*100;
+h+='<div class="biorhythm-item"><div class="biorhythm-name">'+name+'</div>';
+h+='<div class="biorhythm-value">'+val.toFixed(3)+'</div>';
+h+='<div class="bar-container"><div class="bar"><div class="bar-fill '+bc+'" style="width:'+bw+'%"></div></div></div>';
+h+='<div>'+pc+'%</div></div>';
+}
+h+='</div>';
+}
+document.getElementById('biorhythms').innerHTML=h;
+});
 function escape(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
 </script></body></html>`))
 }
 
-
-function getCandleChar(r){
-    if(r>0.6) return '🟩';
-    if(r>0.2) return '🟢';
-    if(r>-0.2) return '🟡';
-    if(r>-0.6) return '🟠';
-    return '🔴';
-}
-
-function getHarmonyChar(h){
-    if(h>8) return '💎';
-    if(h>6) return '✨';
-    if(h>4) return '🌱';
-    if(h>2) return '🍂';
-    return '💔';
-}
-
-function formatDateAxis(dates, periodDays){
-    let axisHtml='<div class="date-axis">';
-    let step=periodDays<=7?periodDays:Math.max(7,Math.floor(periodDays/10));
-    for(let i=0;i<dates.length;i+=step){
-        let d=new Date(dates[i]);
-        let label=d.getDate()+'.'+(d.getMonth()+1);
-        let leftPos=(i/dates.length)*100;
-        axisHtml+='<span style="position:relative;left:'+leftPos+'%;margin-left:-20px;">'+label+'</span>';
-    }
-    axisHtml+='</div>';
-    return axisHtml;
-}
-
-function generateWeekSummary(timeline){
-    let weeks=[];
-    let currentWeek=[];
-    let currentWeekStart=null;
-    for(let i=0;i<timeline.length;i++){
-        let date=new Date(timeline[i].date);
-        let weekNum=Math.floor(date.getTime()/(7*24*60*60*1000));
-        if(currentWeekStart===null || weekNum!==currentWeekStart){
-            if(currentWeek.length>0) weeks.push(currentWeek);
-            currentWeek=[timeline[i]];
-            currentWeekStart=weekNum;
-        }else{
-            currentWeek.push(timeline[i]);
-        }
-    }
-    if(currentWeek.length>0) weeks.push(currentWeek);
-
-    let weekSummaries='<div class="week-summaries"><h3>📅 Недельная аналитика</h3>';
-    for(let w=0;w<weeks.length;w++){
-        let week=weeks[w];
-        if(week.length===0) continue;
-        let avgR=week.reduce((s,p)=>s+p.r,0)/week.length;
-        let avgHarmony=week.reduce((s,p)=>s+p.harmony,0)/week.length;
-        let dominantCandle=getCandleChar(avgR);
-        let dominantHarmony=getHarmonyChar(avgHarmony);
-        let weekStart=new Date(week[0].date);
-        let weekEnd=new Date(week[week.length-1].date);
-        let weekLabel=weekStart.getDate()+'.'+(weekStart.getMonth()+1)+' — '+weekEnd.getDate()+'.'+(weekEnd.getMonth()+1);
-        let climate='';
-        if(avgR>0.4) climate='🌿 Период созидания и роста';
-        else if(avgR>0.1) climate='🌱 Зарождение понимания';
-        else if(avgR>-0.1) climate='⚖️ Период стабильности';
-        else if(avgR>-0.4) climate='🍂 Охлаждение. Потеря ритма';
-        else climate='🔥 КРИЗИС. Режим тишины';
-
-        weekSummaries+='<div class="week-summary">';
-        weekSummaries+='<h4>📅 '+weekLabel+'</h4>';
-        weekSummaries+='<div>Свечной фон: '+dominantCandle+' | Гармония: '+dominantHarmony+'</div>';
-        weekSummaries+='<div>Средний r: '+avgR.toFixed(3)+' | Средняя гармония: '+avgHarmony.toFixed(1)+'</div>';
-        weekSummaries+='<div><strong>'+climate+'</strong></div>';
-        weekSummaries+='</div>';
-    }
-    weekSummaries+='</div>';
-
-    let totalAvgR=timeline.reduce((s,p)=>s+p.r,0)/timeline.length;
-    let totalAvgHarmony=timeline.reduce((s,p)=>s+p.harmony,0)/timeline.length;
-    let totalClimate='';
-    if(totalAvgR>0.4) totalClimate='🌿 Период созидания и роста';
-    else if(totalAvgR>0.1) totalClimate='🌱 Зарождение понимания';
-    else if(totalAvgR>-0.1) totalClimate='⚖️ Период стабильности';
-    else if(totalAvgR>-0.4) totalClimate='🍂 Охлаждение. Потеря ритма';
-    else totalClimate='🔥 КРИЗИС. Режим тишины';
-
-    weekSummaries+='<div class="week-summary" style="background:#e8f5e9"><h4>📊 ОБЩИЙ КЛИМАТ ЗА ПЕРИОД</h4>';
-    weekSummaries+='<div>Средний r: '+totalAvgR.toFixed(3)+' | Средняя гармония: '+totalAvgHarmony.toFixed(1)+'</div>';
-    weekSummaries+='<div><strong>'+totalClimate+'</strong></div>';
-    weekSummaries+='</div>';
-
-    return weekSummaries;
-}
-
-async function loadTimeline(){
-    let a=document.getElementById('personA').value,b=document.getElementById('personB').value;
-    if(!a||!b || a==='Нет данных' || b==='Нет данных'){
-        document.getElementById('result').innerHTML='<div class="error-message">⚠️ Недостаточно данных для анализа</div>';
-        return;
-    }
-    document.getElementById('result').innerHTML='<div class="loading">Загрузка...</div>';
-    try {
-        let r=await fetch('/api/timeline?a='+encodeURIComponent(a)+'&b='+encodeURIComponent(b));
-        if(!r.ok){
-            throw new Error('Ошибка загрузки данных');
-        }
-        let d=await r.json();
-        
-        if(!d.timeline || d.timeline.length===0){
-            document.getElementById('result').innerHTML='<div class="error-message">⚠️ Нет данных для отображения</div>';
-            return;
-        }
-
-        let html='<div class="stats-card"><h3>📊 Статистика за 90 дней</h3>';
-        html+='<p>Среднее r: '+d.statistics.mean.toFixed(4)+' | Медиана: '+d.statistics.median.toFixed(4)+' | Дисперсия: '+d.statistics.variance.toFixed(4)+'</p>';
-        html+='<p>📈 Максимум: '+d.statistics.peak_date+' r='+d.statistics.peak_r.toFixed(4)+'<br>'+d.statistics.peak_status+'</p>';
-        html+='<p>📉 Минимум: '+d.statistics.low_date+' r='+d.statistics.low_r.toFixed(4)+'<br>'+d.statistics.low_status+'</p></div>';
-
-        let candleSymbols='';
-        let dates=[];
-        for(let i=0;i<d.timeline.length;i++){
-            candleSymbols+=getCandleChar(d.timeline[i].r);
-            dates.push(d.timeline[i].date);
-        }
-        html+='<div class="graph-container"><h3>📈 Свечной график (цвет = знак и сила)</h3>';
-        html+='<div class="candle-graph" id="candleGraph">'+candleSymbols+'</div>';
-        html+=formatDateAxis(dates,90);
-        html+='<div class="legend"><div class="legend-item">🟩 r>0.6</div><div class="legend-item">🟢 0.2-0.6</div><div class="legend-item">🟡 -0.2-0.2</div><div class="legend-item">🟠 -0.6 - -0.2</div><div class="legend-item">🔴 r<-0.6</div></div></div>';
-
-        let harmonySymbols='';
-        for(let i=0;i<d.timeline.length;i++){
-            harmonySymbols+=getHarmonyChar(d.timeline[i].harmony);
-        }
-        html+='<div class="graph-container"><h3>🎵 Гармоничность (близость к Φ = 0.618)</h3>';
-        html+='<div class="harmony-graph" id="harmonyGraph">'+harmonySymbols+'</div>';
-        html+=formatDateAxis(dates,90);
-        html+='<div class="legend"><div class="legend-item">💎 >8</div><div class="legend-item">✨ 6-8</div><div class="legend-item">🌱 4-6</div><div class="legend-item">🍂 2-4</div><div class="legend-item">💔 <2</div></div></div>';
-
-        html+=generateWeekSummary(d.timeline);
-        document.getElementById('result').innerHTML=html;
-    } catch(err) {
-        console.error('Timeline error:', err);
-        document.getElementById('result').innerHTML='<div class="error-message">❌ Ошибка загрузки данных: ' + err.message + '</div>';
-    }
-}
-</script></body></html>`))
-}
-
-func (s *Server) forecastPageHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+func (s *Server) timelinePageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Прогноз</title>
-<style>
-body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
+<html><head><meta charset="UTF-8"><title>Динамика</title>
+<style>body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
 .navbar{background:rgba(0,0,0,0.3);padding:15px;display:flex;gap:20px;border-radius:15px;margin-bottom:20px}
 .navbar a{color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px}
 .navbar a:hover{background:rgba(255,255,255,0.2)}
 .container{max-width:1400px;margin:0 auto;background:#fff;border-radius:20px;padding:20px}
 .selector{background:#f5f5f5;padding:20px;border-radius:15px;margin-bottom:20px;display:flex;gap:20px;flex-wrap:wrap}
-.selector select,.selector button{padding:10px;border-radius:8px}
-.selector button{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;cursor:pointer}
+.selector select,button{padding:10px;border-radius:8px}
+button{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;cursor:pointer}
+.stats-card{background:#f5f7fa;padding:20px;border-radius:15px;margin-bottom:20px}
+.graph{background:#f9f9f9;padding:20px;border-radius:15px;font-size:24px;margin-bottom:20px;overflow-x:auto}
+.loading{text-align:center;padding:40px}
+</style></head><body>
+<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix">📊 Матрица</a><a href="/biorhythms">📈 Биоритмы</a><a href="/timeline" class="active">📉 Динамика</a><a href="/forecast">🔮 Прогноз</a><a href="/zones">📖 31 зона</a><a href="/help">❓ Справка</a></div>
+<div class="container"><h1>📉 Динамика</h1>
+<div class="selector"><select id="personA"></select> ↔ <select id="personB"></select><button onclick="load()">Показать</button></div>
+<div id="result"><div class="loading">Выберите пару</div></div></div>
+<script>
+let people=[];
+fetch('/api/pairs').then(r=>r.json()).then(d=>{
+people=[...new Set(d.pairs.flatMap(p=>[p.person_a,p.person_b]))];
+let a=document.getElementById('personA'),b=document.getElementById('personB');
+people.forEach(p=>{a.innerHTML+='<option>'+p+'</option>';b.innerHTML+='<option>'+p+'</option>'});
+if(people.length>=2){a.value=people[0];b.value=people[1];}
+});
+function getCandle(r){
+if(r>0.6)return '🟩';if(r>0.2)return '🟢';if(r>-0.2)return '🟡';if(r>-0.6)return '🟠';return '🔴';
+}
+function getHarmony(h){
+if(h>8)return '💎';if(h>6)return '✨';if(h>4)return '🌱';if(h>2)return '🍂';return '💔';
+}
+async function load(){
+let a=document.getElementById('personA').value,b=document.getElementById('personB').value;
+if(!a||!b)return;
+document.getElementById('result').innerHTML='<div class="loading">Загрузка...</div>';
+let r=await fetch('/api/timeline?a='+encodeURIComponent(a)+'&b='+encodeURIComponent(b));
+let d=await r.json();
+let html='<div class="stats-card"><h3>Статистика</h3><p>Среднее: '+d.statistics.mean.toFixed(4)+' | Медиана: '+d.statistics.median.toFixed(4)+' | Дисперсия: '+d.statistics.variance.toFixed(4)+'</p>';
+html+='<p>📈 Максимум: '+d.statistics.peak_date+' r='+d.statistics.peak_r.toFixed(4)+'<br>'+d.statistics.peak_status+'</p>';
+html+='<p>📉 Минимум: '+d.statistics.low_date+' r='+d.statistics.low_r.toFixed(4)+'<br>'+d.statistics.low_status+'</p></div>';
+html+='<div class="graph"><h3>Свечной график</h3><div>';
+for(let i=0;i<d.timeline.length;i++)html+=getCandle(d.timeline[i].r);
+html+='</div></div><div class="graph"><h3>Гармоничность</h3><div>';
+for(let i=0;i<d.timeline.length;i++)html+=getHarmony(d.timeline[i].harmony);
+html+='</div></div>';
+document.getElementById('result').innerHTML=html;
+}
+</script></body></html>`))
+}
+
+func (s *Server) forecastPageHandler(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Прогноз</title>
+<style>body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
+.navbar{background:rgba(0,0,0,0.3);padding:15px;display:flex;gap:20px;border-radius:15px;margin-bottom:20px}
+.navbar a{color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px}
+.navbar a:hover{background:rgba(255,255,255,0.2)}
+.container{max-width:1400px;margin:0 auto;background:#fff;border-radius:20px;padding:20px}
+.selector{background:#f5f5f5;padding:20px;border-radius:15px;margin-bottom:20px;display:flex;gap:20px;flex-wrap:wrap}
+.selector select,button{padding:10px;border-radius:8px}
+button{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;cursor:pointer}
 .period-btns{display:flex;gap:10px}
 .period-btn{padding:10px 15px;background:#fff;border:1px solid #667eea;border-radius:8px;cursor:pointer}
 .period-btn.active{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff}
@@ -940,48 +577,35 @@ body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);pa
 .card-status{padding:10px;text-align:center;background:#f9f9f9}
 .card-scores{padding:15px}
 .score-item{display:flex;align-items:center;gap:10px;margin:8px 0}
-.score-name{width:130px;font-size:0.85em}
+.score-name{width:130px}
 .score-bar{flex:1;height:25px;background:#e0e0e0;border-radius:12px;overflow:hidden}
-.score-fill{height:100%;background:linear-gradient(90deg,#4ECDC4,#2ecc71);display:flex;align-items:center;justify-content:flex-end;padding-right:5px;color:#fff;font-size:0.7em}
+.score-fill{height:100%;background:linear-gradient(90deg,#4ECDC4,#2ecc71);display:flex;align-items:center;justify-content:flex-end;padding-right:5px;color:#fff}
 .best-worst{background:#f9f9f9;border-radius:15px;padding:20px;margin-bottom:30px;display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .best-card,.worst-card{padding:15px;border-radius:12px;text-align:center}
 .best-card{background:#e8f5e9}
 .worst-card{background:#ffebee}
-.big-date{font-size:1.3em;font-weight:bold;margin:10px 0}
 .loading{text-align:center;padding:40px}
-.positive{color:#4ECDC4}
-.negative{color:#FF6B6B}
-.error-message{background:#ffe0e0;padding:20px;border-radius:10px;color:#c00;text-align:center;margin:20px 0}
 </style></head><body>
-<a href="/zones">📖 31 зона</a>
-<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix">📊 Матрица</a><a href="/biorhythms">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast" class="active">🔮 Прогноз</a><a href="/help">❓ Справка</a></div>
+<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix">📊 Матрица</a><a href="/biorhythms">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast" class="active">🔮 Прогноз</a><a href="/zones">📖 31 зона</a><a href="/help">❓ Справка</a></div>
 <div class="container"><h1>🔮 Прогноз</h1>
 <div class="selector"><select id="personA"></select> ↔ <select id="personB"></select>
 <div class="period-btns"><button class="period-btn" data-days="7">Неделя</button><button class="period-btn active" data-days="30">Месяц</button><button class="period-btn" data-days="90">Квартал</button><button class="period-btn" data-days="365">Год</button></div>
-<button onclick="loadForecast()">🔮 Прогноз</button></div>
+<button onclick="loadForecast()">Прогноз</button></div>
 <div id="result"><div class="loading">Выберите пару</div></div></div>
 <script>
 let people=[],curDays=30;
 fetch('/api/pairs').then(r=>r.json()).then(d=>{
-    if(d.pairs && d.pairs.length > 0){
-        people=[...new Set(d.pairs.flatMap(p=>[p.person_a,p.person_b]))];
-    }
-    let a=document.getElementById('personA'),b=document.getElementById('personB');
-    if(people.length > 0){
-        people.forEach(p=>{a.innerHTML+='<option>'+p+'</option>';b.innerHTML+='<option>'+p+'</option>'});
-        a.value=people[0];
-        if(people[1]) b.value=people[1];
-    } else {
-        a.innerHTML='<option disabled>Нет данных</option>';
-        b.innerHTML='<option disabled>Нет данных</option>';
-    }
+people=[...new Set(d.pairs.flatMap(p=>[p.person_a,p.person_b]))];
+let a=document.getElementById('personA'),b=document.getElementById('personB');
+people.forEach(p=>{a.innerHTML+='<option>'+p+'</option>';b.innerHTML+='<option>'+p+'</option>'});
+if(people.length>=2){a.value=people[0];b.value=people[1];}
 });
 document.querySelectorAll('.period-btn').forEach(b=>{
 b.onclick=function(){
 document.querySelectorAll('.period-btn').forEach(x=>x.classList.remove('active'));
 this.classList.add('active');
 curDays=parseInt(this.dataset.days);
-if(document.getElementById('personA').value && document.getElementById('personA').value !== 'Нет данных')loadForecast();
+if(document.getElementById('personA').value)loadForecast();
 };
 });
 function getEmoji(s){
@@ -1002,19 +626,10 @@ return '📊';
 }
 async function loadForecast(){
 let a=document.getElementById('personA').value,b=document.getElementById('personB').value;
-if(!a||!b || a==='Нет данных' || b==='Нет данных'){
-document.getElementById('result').innerHTML='<div class="error-message">⚠️ Недостаточно данных для прогноза</div>';
-return;
-}
+if(!a||!b)return;
 document.getElementById('result').innerHTML='<div class="loading">Загрузка...</div>';
-try {
 let r=await fetch('/api/forecast?a='+encodeURIComponent(a)+'&b='+encodeURIComponent(b)+'&days='+curDays);
-if(!r.ok) throw new Error('Ошибка загрузки');
 let d=await r.json();
-if(!d.forecast || d.forecast.length===0){
-document.getElementById('result').innerHTML='<div class="error-message">⚠️ Нет данных для прогноза</div>';
-return;
-}
 let fc=[...d.forecast].sort((x,y)=>new Date(x.date)-new Date(y.date));
 let best=fc[0],worst=fc[0];
 for(let f of fc){if(f.r>best.r)best=f;if(f.r<worst.r)worst=f;}
@@ -1031,20 +646,89 @@ html+='</div></div>';
 }
 html+='</div>';
 document.getElementById('result').innerHTML=html;
-} catch(err) {
-console.error('Forecast error:', err);
-document.getElementById('result').innerHTML='<div class="error-message">❌ Ошибка загрузки данных: ' + err.message + '</div>';
-}
 }
 </script></body></html>`))
 }
 
+func (s *Server) zonesPageHandler(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>31 зона</title>
+<style>body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
+.navbar{background:rgba(0,0,0,0.3);padding:15px;display:flex;gap:20px;border-radius:15px;margin-bottom:20px}
+.navbar a{color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px}
+.navbar a:hover{background:rgba(255,255,255,0.2)}
+.container{max-width:1200px;margin:0 auto;background:#fff;border-radius:20px;padding:30px}
+h1{color:#667eea;border-bottom:3px solid #667eea;padding-bottom:10px;margin-bottom:20px}
+h2{color:#667eea;margin:25px 0 15px}
+.zone-card{background:#f9f9f9;border-radius:15px;margin-bottom:15px}
+.zone-header{display:flex;align-items:center;gap:15px;padding:15px 20px;cursor:pointer;background:#f5f7fa}
+.zone-header .emoji{font-size:32px}
+.zone-header .range{font-family:monospace;font-weight:bold;min-width:100px}
+.zone-header .name{flex:1;font-weight:bold;font-size:18px}
+.zone-header .toggle{font-size:20px;color:#667eea}
+.zone-detail{display:none;padding:20px;background:#fff;border-top:1px solid #eee}
+.zone-detail.show{display:block}
+.zone-desc{margin-bottom:15px}
+.zone-interpret{background:#e8f5e9;padding:12px;border-radius:10px}
+.back-link{display:inline-block;margin-top:30px;padding:10px 20px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;text-decoration:none;border-radius:8px}
+.footer{background:#333;color:#fff;text-align:center;padding:20px;margin-top:30px;border-radius:15px}
+</style></head><body>
+<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix">📊 Матрица</a><a href="/biorhythms">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast">🔮 Прогноз</a><a href="/zones" class="active">📖 31 зона</a><a href="/help">❓ Справка</a></div>
+<div class="container"><h1>📖 31 зона психологической классификации</h1><p>7 уровней сознания, 31 состояние. Золотое сечение Φ = 0.618 — идеальная гармония.</p><div id="zones"></div><a href="/" class="back-link">← На главную</a></div>
+<div class="footer"><p>31 зона — авторская классификация на основе корреляции Пирсона и золотого сечения</p></div>
+<script>
+const zones=[
+{level:7,emoji:"🔥",range:"r>0.98",name:"СИМБИОЗ",desc:"Полное слияние личностей",strength:"Максимальное взаимопонимание",weakness:"Потеря индивидуальности",advice:"Сохраняйте личное пространство"},
+{level:7,emoji:"💫",range:"r>0.96",name:"ТРАНСЦЕНДЕНТНОСТЬ",desc:"Выход за пределы личности",strength:"Духовный рост",weakness:"Отрыв от реальности",advice:"Баланс духовного и бытового"},
+{level:7,emoji:"🕊️",range:"r>0.95",name:"САМОАКТУАЛИЗАЦИЯ",desc:"Полная реализация потенциала",strength:"Взаимное развитие",weakness:"Высокие ожидания",advice:"Цените маленькие шаги"},
+{level:6,emoji:"💎",range:"r>0.90",name:"КОСМИЧЕСКАЯ ЛЮБОВЬ",desc:"Безусловное принятие",strength:"Безусловная любовь",weakness:"Риск жертвенности",advice:"Любите, но не теряйте себя"},
+{level:6,emoji:"💖",range:"r>0.85",name:"БОЖЕСТВЕННАЯ ГАРМОНИЯ",desc:"Идеальный резонанс",strength:"Лёгкость",weakness:"Иллюзия вечного счастья",advice:"Не бойтесь конфликтов"},
+{level:6,emoji:"💞",range:"r>0.80",name:"ГЛУБОКАЯ ПРИВЯЗАННОСТЬ",desc:"Душевное родство",strength:"Надёжность",weakness:"Рутина",advice:"Вносите разнообразие"},
+{level:5,emoji:"💛",range:"r>0.75",name:"ИСКРЕННЯЯ БЛИЗОСТЬ",desc:"Тёплые доверительные отношения",strength:"Доверие",weakness:"Эмоциональное выгорание",advice:"Делитесь чувствами"},
+{level:5,emoji:"🌸",range:"r>0.70",name:"ДРУЖЕСКАЯ СИМПАТИЯ",desc:"Естественное притяжение",strength:"Лёгкость",weakness:"Поверхностность",advice:"Позвольте себе быть уязвимым"},
+{level:5,emoji:"🤝",range:"r>0.65",name:"ВЗАИМОПОНИМАНИЕ",desc:"Согласованность ценностей",strength:"Общие цели",weakness:"Риск скучности",advice:"Ставьте совместные цели"},
+{level:5,emoji:"🌱",range:"r>0.60",name:"СИМПАТИЯ",desc:"Начало близости",strength:"Надежда",weakness:"Хрупкость",advice:"Будьте бережны"},
+{level:4,emoji:"👋",range:"r>0.50",name:"ДОБРОЖЕЛАТЕЛЬНОСТЬ",desc:"Открытость к контакту",strength:"Безопасность",weakness:"Пассивность",advice:"Делайте первый шаг"},
+{level:4,emoji:"😐",range:"r>0.45",name:"НЕЙТРАЛЬНО-ПОЗИТИВНОЕ",desc:"Комфортное сосуществование",strength:"Спокойствие",weakness:"Застой",advice:"Ищите точки роста"},
+{level:4,emoji:"📍",range:"r>0.40",name:"ЛЁГКАЯ СИМПАТИЯ",desc:"Без обязательств",strength:"Свобода",weakness:"Боязнь обязательств",advice:"Будьте честны"},
+{level:4,emoji:"🧘",range:"r>0.30",name:"ЭМОЦИОНАЛЬНЫЙ НОЛЬ",desc:"Спокойное равнодушие",strength:"Объективность",weakness:"Отсутствие тепла",advice:"Позвольте себе чувствовать"},
+{level:3,emoji:"🧊",range:"r>0.20",name:"ЛЁГКАЯ ОТСТРАНЁННОСТЬ",desc:"Дипломатичность",strength:"Безопасность",weakness:"Холодность",advice:"Приоткройтесь"},
+{level:3,emoji:"🤨",range:"r>0.10",name:"НАБЛЮДАТЕЛЬ",desc:"Сторонний анализ",strength:"Объективность",weakness:"Отсутствие вовлечённости",advice:"Решитесь на шаг"},
+{level:3,emoji:"❓",range:"r>0.00",name:"НЕОПРЕДЕЛЁННОСТЬ",desc:"Формирование отношения",strength:"Открытость",weakness:"Нестабильность",advice:"Дайте себе время"},
+{level:2,emoji:"😌",range:"r>-0.10",name:"ЛЁГКОЕ НАПРЯЖЕНИЕ",desc:"Притирка",strength:"Динамика",weakness:"Дискомфорт",advice:"Терпение"},
+{level:2,emoji:"😤",range:"r>-0.20",name:"РАЗДРАЖЕНИЕ",desc:"Мелкие конфликты",strength:"Честность",weakness:"Взрывчатость",advice:"Дышите"},
+{level:2,emoji:"🥀",range:"r>-0.30",name:"ОТЧУЖДЕНИЕ",desc:"Эмоциональная дистанция",strength:"Защита",weakness:"Потеря связи",advice:"Поговорите"},
+{level:1,emoji:"⚡",range:"r>-0.40",name:"НАПРЯЖЕНИЕ",desc:"Постоянные трения",strength:"Прямота",weakness:"Усталость",advice:"Возьмите паузу"},
+{level:1,emoji:"🔥",range:"r>-0.50",name:"КОНФРОНТАЦИЯ",desc:"Открытое противостояние",strength:"Ясность",weakness:"Истощение",advice:"Согласитесь не соглашаться"},
+{level:1,emoji:"💔",range:"r>-0.60",name:"РАЗРЫВ",desc:"Потеря эмоциональной связи",strength:"Конец страданиям",weakness:"Боль потери",advice:"Примите"},
+{level:0,emoji:"🗡️",range:"r>-0.70",name:"ВРАЖДЕБНОСТЬ",desc:"Системный конфликт",strength:"Ясность",weakness:"Постоянная борьба",advice:"Минимизируйте контакты"},
+{level:0,emoji:"💀",range:"r>-0.80",name:"АНТАГОНИЗМ",desc:"Непримиримое противостояние",strength:"Предсказуемость",weakness:"Разрушительное влияние",advice:"Признайте несовместимость"},
+{level:0,emoji:"🌑",range:"r>-0.90",name:"ПСИХОЛОГИЧЕСКОЕ ОТТОРЖЕНИЕ",desc:"Аверсия",strength:"Чёткая граница",weakness:"Интенсивный дискомфорт",advice:"Прекратите контакт"},
+{level:0,emoji:"🕳️",range:"r>-0.95",name:"ЭКЗИСТЕНЦИАЛЬНАЯ НЕСОВМЕСТИМОСТЬ",desc:"Полное неприятие",strength:"Абсолютная ясность",weakness:"Невозможность взаимодействия",advice:"Не пытайтесь"},
+{level:0,emoji:"🌌",range:"r≤-0.95",name:"ТОТАЛЬНЫЙ РАЗРЫВ",desc:"Энергетический вакуум",strength:"Окончательная точка",weakness:"Опустошение",advice:"Исцеляйтесь"}
+];
+function render(){
+let h="",l=null;
+for(let z of zones){
+if(z.level!==l){
+if(l!==null)h+="</div>";
+l=z.level;
+let n=l===7?"🔴 Уровень 7: Самоактуализация":l===6?"🟠 Уровень 6: Гармония":l===5?"🟡 Уровень 5: Любовь и принятие":l===4?"🟢 Уровень 4: Стабильность":l===3?"🔵 Уровень 3: Нейтральность":l===2?"🟣 Уровень 2: Напряжение":l===1?"⚫ Уровень 1: Конфликт":"⚪ Уровень 0: Антагонизм";
+h+="<h2>"+n+"</h2><div>";
+}
+h+='<div class="zone-card"><div class="zone-header" onclick="this.nextElementSibling.classList.toggle(\'show\')"><div class="emoji">'+z.emoji+'</div><div class="range">'+z.range+'</div><div class="name">'+z.name+'</div><div class="toggle">▼</div></div><div class="zone-detail"><div class="zone-desc">'+z.desc+'</div><div class="zone-interpret"><p><strong>💪 Сильная сторона:</strong> '+z.strength+'</p><p><strong>⚠️ Слабая сторона:</strong> '+z.weakness+'</p><p><strong>💡 Рекомендация:</strong> '+z.advice+'</p></div></div></div>';
+}
+h+="</div>";
+document.getElementById("zones").innerHTML=h;
+}
+render();
+</script></body></html>`))
+}
+
 func (s *Server) helpPageHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Справка</title>
-<style>
-body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
+<style>body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
 .navbar{background:rgba(0,0,0,0.3);padding:15px;display:flex;gap:20px;border-radius:15px;margin-bottom:20px}
 .navbar a{color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px}
 .navbar a:hover{background:rgba(255,255,255,0.2)}
@@ -1053,279 +737,22 @@ h1,h2{color:#667eea}
 .zone-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:15px;margin:20px 0}
 .zone-category{background:#f5f5f5;padding:15px;border-radius:10px}
 </style></head><body>
-<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix">📊 Матрица</a><a href="/biorhythms">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast">🔮 Прогноз</a><a href="/help" class="active">❓ Справка</a></div>
+<div class="navbar"><a href="/">🏠 Главная</a><a href="/matrix">📊 Матрица</a><a href="/biorhythms">📈 Биоритмы</a><a href="/timeline">📉 Динамика</a><a href="/forecast">🔮 Прогноз</a><a href="/zones">📖 31 зона</a><a href="/help" class="active">❓ Справка</a></div>
 <div class="container"><h1>❓ Справка</h1>
 <h2>31 зона психологической классификации</h2>
-<p>7 уровней сознания, каждый разделён на подуровни:</p>
-<div class="zone-list"><div class="zone-category"><h3>🔴 Уровень 7: Самоактуализация (r > 0.95)</h3><ul><li>r>0.98 — Симбиоз</li><li>r>0.96 — Трансцендентность</li><li>r>0.95 — Самоактуализация</li></ul></div>
+<p>7 уровней сознания:</p>
+<div class="zone-list">
+<div class="zone-category"><h3>🔴 Уровень 7: Самоактуализация (r>0.95)</h3><ul><li>r>0.98 — Симбиоз</li><li>r>0.96 — Трансцендентность</li><li>r>0.95 — Самоактуализация</li></ul></div>
 <div class="zone-category"><h3>🟠 Уровень 6: Гармония (0.80-0.95)</h3><ul><li>r>0.90 — Космическая любовь</li><li>r>0.85 — Божественная гармония</li><li>r>0.80 — Глубокая привязанность</li></ul></div>
 <div class="zone-category"><h3>🟡 Уровень 5: Любовь (0.60-0.80)</h3><ul><li>r>0.75 — Искренняя близость</li><li>r>0.70 — Дружеская симпатия</li><li>r>0.65 — Взаимопонимание</li><li>r>0.60 — Симпатия</li></ul></div>
 <div class="zone-category"><h3>🟢 Уровень 4: Стабильность (0.30-0.60)</h3><ul><li>r>0.50 — Доброжелательность</li><li>r>0.45 — Нейтрально-позитивное</li><li>r>0.40 — Лёгкая симпатия</li><li>r>0.30 — Эмоциональный ноль</li></ul></div>
 <div class="zone-category"><h3>🔵 Уровень 3: Нейтральность (0.00-0.30)</h3><ul><li>r>0.20 — Лёгкая отстранённость</li><li>r>0.10 — Наблюдатель</li><li>r>0.00 — Неопределённость</li></ul></div>
 <div class="zone-category"><h3>🟣 Уровень 2: Напряжение (-0.30-0.00)</h3><ul><li>r>-0.10 — Лёгкое напряжение</li><li>r>-0.20 — Раздражение</li><li>r>-0.30 — Отчуждение</li></ul></div>
 <div class="zone-category"><h3>⚫ Уровень 1: Конфликт (-0.60 - -0.30)</h3><ul><li>r>-0.40 — Напряжение</li><li>r>-0.50 — Конфронтация</li><li>r>-0.60 — Разрыв</li></ul></div>
-<div class="zone-category"><h3>⚪ Уровень 0: Антагонизм (r < -0.60)</h3><ul><li>r>-0.70 — Враждебность</li><li>r>-0.80 — Антагонизм</li><li>r>-0.90 — Психологическое отторжение</li><li>r>-0.95 — Экзистенциальная несовместимость</li><li>r≤-0.95 — Тотальный разрыв</li></ul></div></div>
-<h2>🎵 Гармоничность</h2><p>Оценка от 0 до 10, где 10 — идеальная близость к золотому сечению (Φ = 0.618).</p>
-<h2>🔮 Прогноз по сферам жизни</h2><p>7 сфер: любовь, карьера, дружба, творчество, здоровье, обучение, финансы.</p>
-<h2>📈 Биоритмы</h2><p>5 биоритмов: физический(23), эмоциональный(28), интеллектуальный(33), духовный(38), интуитивный(42).</p>
+<div class="zone-category"><h3>⚪ Уровень 0: Антагонизм (r<-0.60)</h3><ul><li>r>-0.70 — Враждебность</li><li>r>-0.80 — Антагонизм</li><li>r>-0.90 — Психологическое отторжение</li><li>r>-0.95 — Экзистенциальная несовместимость</li><li>r≤-0.95 — Тотальный разрыв</li></ul></div>
+</div>
+<h2>🎵 Гармоничность</h2><p>Оценка от 0 до 10, где 10 — идеальная близость к Φ=0.618</p>
+<h2>🔮 Прогноз</h2><p>7 сфер: любовь, карьера, дружба, творчество, здоровье, обучение, финансы</p>
+<h2>📈 Биоритмы</h2><p>Физический(23), эмоциональный(28), интеллектуальный(33), духовный(38), интуитивный(42)</p>
 </div></body></html>`))
-}
-func (s *Server) matrixHandler(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
-	people, err := storage.LoadPeople()
-	if err != nil {
-		if s.log != nil {
-			s.log.Error("Failed to load people: %v", err)
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if s.log != nil {
-		s.log.Debug("Processing %d people for matrix", len(people))
-	}
-
-	if len(people) == 0 {
-		response := map[string]interface{}{
-			"names":  []string{},
-			"matrix": [][]float64{},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	names := make([]string, len(people))
-	for i, p := range people {
-		names[i] = p.Name
-	}
-
-	// Создаём матрицу
-	matrix := make([][]float64, len(people))
-	for i := 0; i < len(people); i++ {
-		matrix[i] = make([]float64, len(people))
-		matrix[i][i] = 1.0
-	}
-
-	// ТОЧНО ТАКОЙ ЖЕ ЦИКЛ, как в pairsHandler
-	for i := 0; i < len(people); i++ {
-		for j := i + 1; j < len(people); j++ {
-			r := metrics.CalculateCorrelation(people[i], people[j], now)
-			matrix[i][j] = r
-			matrix[j][i] = r
-			if s.log != nil {
-				s.log.Debug("Matrix[%d][%d] = %f (%s-%s)", i, j, r, people[i].Name, people[j].Name)
-			}
-		}
-	}
-
-	response := map[string]interface{}{
-		"names":  names,
-		"matrix": matrix,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-func (s *Server) timelinePageHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Динамика | Психометрический анализатор</title>
-<style>
-body{font-family:system-ui;background:linear-gradient(135deg,#667eea,#764ba2);padding:20px}
-.navbar{background:rgba(0,0,0,0.3);padding:15px;display:flex;gap:20px;border-radius:15px;margin-bottom:20px}
-.navbar a{color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px}
-.navbar a:hover{background:rgba(255,255,255,0.2)}
-.container{max-width:1400px;margin:0 auto;background:#fff;border-radius:20px;padding:20px}
-.selector{background:#f5f5f5;padding:20px;border-radius:15px;margin-bottom:20px;display:flex;gap:20px;flex-wrap:wrap;align-items:center}
-.selector select,button{padding:10px;border-radius:8px}
-button{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;cursor:pointer}
-.stats-card{background:#f5f7fa;padding:20px;border-radius:15px;margin-bottom:20px}
-.graph-container{background:#f9f9f9;padding:20px;border-radius:15px;margin-bottom:20px;overflow-x:auto}
-.candle-graph{font-size:24px;letter-spacing:2px;font-family:monospace;white-space:nowrap}
-.harmony-graph{font-size:24px;letter-spacing:2px;font-family:monospace;white-space:nowrap}
-.date-axis{font-family:monospace;font-size:12px;margin-top:8px;white-space:nowrap}
-.date-axis span{display:inline-block;text-align:center;margin-right:20px}
-.legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:15px;padding:10px;background:#f0f0f0;border-radius:10px}
-.legend-item{display:flex;align-items:center;gap:8px}
-.loading{text-align:center;padding:40px}
-.positive{color:#4ECDC4}
-.negative{color:#FF6B6B}
-.week-summary{background:#f0f0f0;padding:10px;border-radius:10px;margin:10px 0}
-.week-summary h4{margin:0 0 5px 0}
-.error-message{background:#ffe0e0;padding:20px;border-radius:10px;color:#c00;text-align:center;margin:20px 0}
-</style></head><body>
-<div class="navbar">
-<a href="/">🏠 Главная</a>
-<a href="/matrix">📊 Матрица</a>
-<a href="/biorhythms">📈 Биоритмы</a>
-<a href="/timeline" class="active">📉 Динамика</a>
-<a href="/forecast">🔮 Анализ</a>
-<a href="/zones">📖 31 зона</a>
-<a href="/help">❓ Справка</a>
-</div>
-<div class="container">
-<h1>📉 Динамика корреляций</h1>
-<div class="selector">
-<select id="personA"></select> ↔ <select id="personB"></select>
-<button onclick="loadTimeline()">📊 Показать</button>
-</div>
-<div id="result"><div class="loading">Выберите пару</div></div>
-</div>
-<script>
-let people=[];
-fetch('/api/pairs').then(r=>r.json()).then(d=>{
-    if(d.pairs && d.pairs.length > 0){
-        people=[...new Set(d.pairs.flatMap(p=>[p.person_a,p.person_b]))];
-    }
-    let a=document.getElementById('personA'),b=document.getElementById('personB');
-    if(people.length > 0){
-        people.forEach(p=>{a.innerHTML+='<option>'+p+'</option>';b.innerHTML+='<option>'+p+'</option>'});
-        a.value=people[0];
-        if(people[1]) b.value=people[1];
-    }
-});
-
-function getCandleChar(r){
-    if(r>0.6) return '🟩';
-    if(r>0.2) return '🟢';
-    if(r>-0.2) return '🟡';
-    if(r>-0.6) return '🟠';
-    return '🔴';
-}
-
-function getHarmonyChar(h){
-    if(h>8) return '💎';
-    if(h>6) return '✨';
-    if(h>4) return '🌱';
-    if(h>2) return '🍂';
-    return '💔';
-}
-
-function formatDateAxis(dates){
-    if(!dates || dates.length===0) return '';
-    let axisHtml='<div class="date-axis">';
-    let step=Math.max(1, Math.floor(dates.length/10));
-    for(let i=0;i<dates.length;i+=step){
-        let d=dates[i];
-        if(d && d!=='Invalid Date'){
-            let parts=d.split('.');
-            let label=parts[0]+'.'+parts[1];
-            axisHtml+='<span>'+label+'</span>';
-        }
-    }
-    axisHtml+='</div>';
-    return axisHtml;
-}
-
-function formatDate(d){
-    if(!d) return '?';
-    let parts=d.split('.');
-    if(parts.length===3){
-        return parts[0]+'.'+parts[1];
-    }
-    return d;
-}
-
-function generateWeekSummary(timeline){
-    if(!timeline || timeline.length===0) return '';
-    
-    let weeks=[];
-    let currentWeek=[];
-    for(let i=0;i<timeline.length;i++){
-        currentWeek.push(timeline[i]);
-        if(currentWeek.length===7 || i===timeline.length-1){
-            weeks.push([...currentWeek]);
-            currentWeek=[];
-        }
-    }
-    
-    let weekSummaries='<div class="week-summaries"><h3>📅 Недельная аналитика</h3>';
-    for(let w=0;w<weeks.length;w++){
-        let week=weeks[w];
-        if(week.length===0) continue;
-        let avgR=week.reduce((s,p)=>s+p.r,0)/week.length;
-        let avgHarmony=week.reduce((s,p)=>s+p.harmony,0)/week.length;
-        let startDate=week[0].date;
-        let endDate=week[week.length-1].date;
-        
-        let climate='';
-        if(avgR>0.4) climate='🌿 Период созидания и роста';
-        else if(avgR>0.1) climate='🌱 Зарождение понимания';
-        else if(avgR>-0.1) climate='⚖️ Период стабильности';
-        else if(avgR>-0.4) climate='🍂 Охлаждение. Потеря ритма';
-        else climate='🔥 КРИЗИС. Режим тишины';
-        
-        weekSummaries+='<div class="week-summary">';
-        weekSummaries+='<h4>📅 '+formatDate(startDate)+' — '+formatDate(endDate)+'</h4>';
-        weekSummaries+='<div>Средний r: '+avgR.toFixed(3)+' | Средняя гармония: '+avgHarmony.toFixed(1)+'</div>';
-        weekSummaries+='<div><strong>'+climate+'</strong></div>';
-        weekSummaries+='</div>';
-    }
-    
-    let totalAvgR=timeline.reduce((s,p)=>s+p.r,0)/timeline.length;
-    let totalAvgHarmony=timeline.reduce((s,p)=>s+p.harmony,0)/timeline.length;
-    let totalClimate='';
-    if(totalAvgR>0.4) totalClimate='🌿 Период созидания и роста';
-    else if(totalAvgR>0.1) totalClimate='🌱 Зарождение понимания';
-    else if(totalAvgR>-0.1) totalClimate='⚖️ Период стабильности';
-    else if(totalAvgR>-0.4) totalClimate='🍂 Охлаждение. Потеря ритма';
-    else totalClimate='🔥 КРИЗИС. Режим тишины';
-    
-    weekSummaries+='<div class="week-summary" style="background:#e8f5e9;margin-top:20px"><h4>📊 ОБЩИЙ КЛИМАТ ЗА ПЕРИОД</h4>';
-    weekSummaries+='<div>Средний r: '+totalAvgR.toFixed(3)+' | Средняя гармония: '+totalAvgHarmony.toFixed(1)+'</div>';
-    weekSummaries+='<div><strong>'+totalClimate+'</strong></div>';
-    weekSummaries+='</div>';
-    
-    return weekSummaries;
-}
-
-async function loadTimeline(){
-    let a=document.getElementById('personA').value,b=document.getElementById('personB').value;
-    if(!a||!b){
-        document.getElementById('result').innerHTML='<div class="error-message">Выберите двух человек</div>';
-        return;
-    }
-    document.getElementById('result').innerHTML='<div class="loading">Загрузка...</div>';
-    try {
-        let r=await fetch('/api/timeline?a='+encodeURIComponent(a)+'&b='+encodeURIComponent(b));
-        if(!r.ok) throw new Error('Ошибка загрузки');
-        let d=await r.json();
-        
-        if(!d.timeline || d.timeline.length===0){
-            document.getElementById('result').innerHTML='<div class="error-message">Нет данных за выбранный период</div>';
-            return;
-        }
-        
-        let html='<div class="stats-card"><h3>📊 Статистика за 90 дней</h3>';
-        html+='<p>Среднее r: '+d.statistics.mean.toFixed(4)+' | Медиана: '+d.statistics.median.toFixed(4)+' | Дисперсия: '+d.statistics.variance.toFixed(4)+'</p>';
-        html+='<p>📈 Максимум: '+d.statistics.peak_date+' r='+d.statistics.peak_r.toFixed(4)+'<br>'+d.statistics.peak_status+'</p>';
-        html+='<p>📉 Минимум: '+d.statistics.low_date+' r='+d.statistics.low_r.toFixed(4)+'<br>'+d.statistics.low_status+'</p></div>';
-        
-        let candleSymbols='';
-        let dates=[];
-        for(let i=0;i<d.timeline.length;i++){
-            candleSymbols+=getCandleChar(d.timeline[i].r);
-            dates.push(d.timeline[i].date);
-        }
-        html+='<div class="graph-container"><h3>📈 Свечной график (цвет = знак и сила)</h3>';
-        html+='<div class="candle-graph">'+candleSymbols+'</div>';
-        html+=formatDateAxis(dates);
-        html+='<div class="legend"><div class="legend-item">🟩 r>0.6</div><div class="legend-item">🟢 0.2-0.6</div><div class="legend-item">🟡 -0.2-0.2</div><div class="legend-item">🟠 -0.6 - -0.2</div><div class="legend-item">🔴 r<-0.6</div></div></div>';
-        
-        let harmonySymbols='';
-        for(let i=0;i<d.timeline.length;i++){
-            harmonySymbols+=getHarmonyChar(d.timeline[i].harmony);
-        }
-        html+='<div class="graph-container"><h3>🎵 Гармоничность (близость к Φ = 0.618)</h3>';
-        html+='<div class="harmony-graph">'+harmonySymbols+'</div>';
-        html+=formatDateAxis(dates);
-        html+='<div class="legend"><div class="legend-item">💎 >8</div><div class="legend-item">✨ 6-8</div><div class="legend-item">🌱 4-6</div><div class="legend-item">🍂 2-4</div><div class="legend-item">💔 <2</div></div></div>';
-        
-        html+=generateWeekSummary(d.timeline);
-        document.getElementById('result').innerHTML=html;
-    } catch(err) {
-        console.error('Timeline error:', err);
-        document.getElementById('result').innerHTML='<div class="error-message">❌ Ошибка: '+err.message+'</div>';
-    }
-}
-</script></body></html>`))
 }
