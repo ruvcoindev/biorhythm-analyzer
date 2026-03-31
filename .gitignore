@@ -18,7 +18,10 @@ vendor/
 dist/
 build/
 bin/
-data/
+
+# Data directory - игнорируем ВСЁ внутри, но оставляем папку
+data/*
+!data/.gitkeep
 
 # IDE
 .idea/
